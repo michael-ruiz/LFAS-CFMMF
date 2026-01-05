@@ -165,9 +165,13 @@ class Multi_FusionNet(nn.Module):
         self.drop = nn.Dropout(0.3)
 
     def forward(self, x):
+        # 3-modality version (commented out):
         # color, depth, ir = x[:, 0:3,:,:], x[:, 3:6,:,:], x[:, 6:9,:,:]
-        # color, depth, ir, thermal = x[:, 0:3,:,:], x[:, 3:6,:,:], x[:, 6:9,:,:], x[:, 9:12,:,:]
-        color, depth, ir, thermal = x[:, 9:12,:,:], x[:, 3:6,:,:], x[:, 6:9,:,:], x[:, 9:12,:,:]
+
+        # 4-modality version (FIXED - removed duplicate channel indices):
+        # Input x expected shape: (batch, 12, H, W) where channels are:
+        # [0:3] = Color, [3:6] = Depth, [6:9] = IR, [9:12] = Thermal
+        color, depth, ir, thermal = x[:, 0:3,:,:], x[:, 3:6,:,:], x[:, 6:9,:,:], x[:, 9:12,:,:]
         # backbone net
         color_feas = self.rgb_backbone(color)
         depth_feas = self.depth_backbone(depth)

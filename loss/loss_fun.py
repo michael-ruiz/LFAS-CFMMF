@@ -55,8 +55,8 @@ class CMFL(nn.Module):
         self.sg = sg
 
     def forward(self, inputs_p, inputs_q, targets):
-        probs_p = F.cross_entropy(inputs_p, targets, reduce=False)
-        probs_q = F.cross_entropy(inputs_q, targets, reduce=False)
+        probs_p = F.cross_entropy(inputs_p, targets, reduction='none')
+        probs_q = F.cross_entropy(inputs_q, targets, reduction='none')
         pt_a = torch.exp(-probs_p)
         pt_b = torch.exp(-probs_q)
         eps = 0.000000001
@@ -104,9 +104,9 @@ class ICMFL(nn.Module):
         self.sg = sg
 
     def forward(self, inputs_p1, inputs_p2,inputs_p3, targets):
-        probs_p1 = F.cross_entropy(inputs_p1, targets, reduce=False)
-        probs_p2 = F.cross_entropy(inputs_p2, targets, reduce=False)
-        probs_p3 = F.cross_entropy(inputs_p3, targets, reduce=False)
+        probs_p1 = F.cross_entropy(inputs_p1, targets, reduction='none')
+        probs_p2 = F.cross_entropy(inputs_p2, targets, reduction='none')
+        probs_p3 = F.cross_entropy(inputs_p3, targets, reduction='none')
 
         pt_a = torch.exp(-probs_p1)
         pt_b = torch.exp(-probs_p2)
@@ -153,7 +153,7 @@ class ICMFL(nn.Module):
 class PixWiseBCELoss(nn.Module):
     def __init__(self, beta=0.5):
         super(PixWiseBCELoss).__init__()
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.BCEWithLogitsLoss()
         self.beta = beta
 
     def forward(self, net_mask, net_label, target_mask, target_label):
@@ -166,7 +166,7 @@ class PixWiseBCELoss(nn.Module):
 class PixWise_Loss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.BCEWithLogitsLoss()
 
     def forward(self, net_mask, target_mask):
         pixel_loss = self.criterion(net_mask, target_mask)
@@ -193,12 +193,14 @@ class Moat_Loss(nn.Module):
 
 
 def softmax_cross_entropy_criterion(logit, truth, is_average=True):
-    loss = F.cross_entropy(logit, truth, reduce=is_average)
+    reduction = 'mean' if is_average else 'sum'
+    loss = F.cross_entropy(logit, truth, reduction=reduction)
     return loss
 
 
 def bce_criterion(logit, truth, is_average=True):
-    loss = F.binary_cross_entropy_with_logits(logit, truth, reduce=is_average)
+    reduction = 'mean' if is_average else 'sum'
+    loss = F.binary_cross_entropy_with_logits(logit, truth, reduction=reduction)
     return loss
 
 

@@ -3,6 +3,9 @@ import numpy as np
 from loss.metric import *
 from tqdm import tqdm
 
+# Device configuration (CPU or CUDA)
+device = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
+
 def train_one_epoch(epoch, train_loader, net, criterion, sgdr, optimizer, config):
     sgdr.step()
     lr = optimizer.param_groups[0]['lr']
@@ -11,43 +14,64 @@ def train_one_epoch(epoch, train_loader, net, criterion, sgdr, optimizer, config
     r1, r2 = config.bce, config.pwl
     r3 = config.cmfl
     optimizer.zero_grad()
+
+    # Track predictions for debugging
+    all_predictions = []
+    all_truths = []
+
     for input, mask, truth in train_loader:
         # one iteration update
         net.train()
-        input = input.cuda()
-        truth = truth.cuda()
-        mask = mask.cuda()
+        input = input.to(device)
+        truth = truth.to(device)
+        mask = mask.to(device)
         logit, depth_logits, color_logits, ir_logits, x_map = net.forward(input)
         truth = truth.view(logit.shape[0])
 
         x_map = x_map.to(torch.float32)
         mask = mask.to(torch.float32)
+
         loss_pwl = criterion['PWL'](x_map, mask)
         loss1 = criterion['BCE'](logit, truth)
-        # loss = r1*loss1 + r2*loss_pwl
-
-        # loss2 = criterion['BCE'](depth_logits, truth)
-        # loss3 = criterion['BCE'](color_logits, truth)
-        # loss4 = criterion['BCE'](ir_logits, truth)
-        # loss = loss2 + loss3 + loss4
-        # loss2 = 0.5 * loss2 + 0.5 * loss3 + 0.5 * loss4
-        # loss = loss2 + loss3 + loss4
-        # loss = r1*loss1 + loss2 + r2*loss_pwl
-
-        
-        # loss_w, loss_r, loss2 = criterion['CMFL'](color_logits, depth_logits, truth)
-        # loss = r1*loss1 + r2*loss_pwl + r3 * loss2
-
         loss_r,loss_d,loss_i,loss2 = criterion['ICMFL'](color_logits, depth_logits, ir_logits, truth)
         loss = r1*loss1 + r2*loss_pwl + r3 * loss2
+
+        # Safety check: stop if NaN detected
+        if torch.isnan(loss):
+            print(f"ERROR: NaN loss detected at epoch {epoch}!")
+            print(f"  loss1 (BCE): {loss1.item()}, loss_pwl: {loss_pwl.item()}, loss2 (ICMFL): {loss2.item()}")
+            import sys
+            sys.exit(1)
         # loss = loss1 + r3 * loss2
         # logit = (depth_logits + color_logits + ir_logits) / 3.0
 
-        precision, _ = metric(logit, truth)
+        precision, prob = metric(logit, truth)
+
+        # Debug: Track predictions
+        if epoch == 0:
+            pred_class = torch.argmax(prob, dim=1).cpu().numpy()
+            all_predictions.extend(pred_class)
+            all_truths.extend(truth.cpu().numpy())
+
         loss.backward()
+
+        # Clip gradients to prevent explosion
+        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+
         optimizer.step()
         optimizer.zero_grad()
         batch_loss[:2] = np.array((loss.item(), precision.item(),))  # 损失函数和准确率 [2.6929493 0.671875 ]
+
+    # Debug: Print training prediction distribution for epoch 0
+    if epoch == 0:
+        all_predictions = np.array(all_predictions)
+        all_truths = np.array(all_truths)
+        print(f"[Training Debug] Total samples: {len(all_predictions)}, "
+              f"Predicted class 0: {np.sum(all_predictions == 0)}, "
+              f"Predicted class 1: {np.sum(all_predictions == 1)}")
+        print(f"[Training Debug] True labels - Class 0: {np.sum(all_truths == 0)}, "
+              f"Class 1: {np.sum(all_truths == 1)}")
+        print(f"[Training Debug] Accuracy: {np.mean(all_predictions == all_truths):.4f}")
 
     return batch_loss, lr
 
@@ -62,8 +86,8 @@ def do_test(net, test_loader, criterion, config):
     for i, (input, mask, truth) in enumerate(test_loader):
         b, n, c, w, h = input.size()
         input = input.view(b * n, c, w, h)
-        input = input.cuda()
-        truth = truth.cuda()
+        input = input.to(device)
+        truth = truth.to(device)
         with torch.no_grad():
             logit, depth_logits, color_logits, ir_logits, x_map = net(input)
             logit = logit.view(b, n, logit.shape[1])
@@ -104,8 +128,21 @@ def do_test(net, test_loader, criterion, config):
     loss = np.array(losses)
     loss = loss.mean()
     probs = np.concatenate(probs)
+
+    # Debug: Check prediction distribution
+    predictions = np.argmax(probs, axis=1)
+    print(f"[Validation Debug] Total samples: {len(predictions)}, "
+          f"Predicted class 0: {np.sum(predictions == 0)}, "
+          f"Predicted class 1: {np.sum(predictions == 1)}")
+    print(f"[Validation Debug] Prob stats - Min: {probs.min():.4f}, Max: {probs.max():.4f}, "
+          f"Mean: {probs.mean():.4f}")
+
     probs = probs[:, 1]
     labels = np.concatenate(labels)
+
+    # Debug: Check label distribution
+    print(f"[Validation Debug] True labels - Class 0: {np.sum(labels == 0)}, "
+          f"Class 1: {np.sum(labels == 1)}")
 
     
     """

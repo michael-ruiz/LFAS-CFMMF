@@ -36,8 +36,11 @@ def run_train(localtime):
 
     # get net
     net = get_model(config=config, num_class=2)
-    net = torch.nn.DataParallel(net)
-    net = net.cuda()
+    if torch.cuda.is_available():
+        net = torch.nn.DataParallel(net)
+        net = net.cuda()
+    else:
+        net = net.to(device)
 
     # 参数量和FLOPs计算,并存储
     count_params(net, config, log_file, input_size=config.image_size)
@@ -152,7 +155,10 @@ def run_test(config,localtime):
         # get net
         net = get_model(config=config, num_class=2)
         net.load_state_dict(torch.load(init_checkpoint, map_location=lambda storage, loc: storage))
-        net = net.cuda()
+        if torch.cuda.is_available():
+            net = net.cuda()
+        else:
+            net = net.to(device)
         net.eval()
         test_loss, test_correct, test_probs, test_labels = do_test(net, test_loader, criterion, config)     
         

@@ -1,6 +1,10 @@
+import os
 
 def Get_path(data_name, prot = '1', sub_prot = None):
-    Dir = '/hexp/ALL_DATA/FAS_DATA'
+    # Get the project root directory (parent of data_process folder)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    Dir = os.path.join(project_root, 'datasets')
 
     train_image_dir, train_list = None, None
     val_image_dir, val_list = None, None
@@ -83,7 +87,7 @@ def Get_path(data_name, prot = '1', sub_prot = None):
         train_list = f"{Dir}/{NAME}/{PROT}/{prot}_train_list.txt"
 
         val_image_dir = f'{Dir}/{NAME}/'
-        val_list = f"{Dir}/{NAME}/{PROT}/{prot}_val_list.txt"
+        val_list = f"{Dir}/{NAME}/{PROT}/{prot}_dev_list.txt"
 
         test_image_dir = f'{Dir}/{NAME}/'
         test_list = f"{Dir}/{NAME}/{PROT}/{prot}_test_list.txt"
