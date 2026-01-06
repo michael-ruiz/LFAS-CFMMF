@@ -154,7 +154,12 @@ def run_test(config,localtime):
         print('infer!!!!!!!!!')
         # get net
         net = get_model(config=config, num_class=2)
-        net.load_state_dict(torch.load(init_checkpoint, map_location=lambda storage, loc: storage))
+        # Load checkpoint and handle DataParallel prefix
+        state_dict = torch.load(init_checkpoint, map_location=lambda storage, loc: storage)
+        # Remove 'module.' prefix if model was saved with DataParallel
+        if list(state_dict.keys())[0].startswith('module.'):
+            state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        net.load_state_dict(state_dict)
         if torch.cuda.is_available():
             net = net.cuda()
         else:
