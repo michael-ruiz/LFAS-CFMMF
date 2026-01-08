@@ -147,8 +147,9 @@ class Multi_FusionNet(nn.Module):
         print('')
 
 
-    def __init__(self, num_class=10):
+    def __init__(self, num_class=10, guidance_modality='depth'):
         super(Multi_FusionNet,self).__init__()
+        self.guidance_modality = guidance_modality
         self.rgb_backbone = ShuffleNetV2()
         self.depth_backbone = ShuffleNetV2()
         self.ir_backbone = ShuffleNetV2()
@@ -176,11 +177,28 @@ class Multi_FusionNet(nn.Module):
         color_feas = self.rgb_backbone(color)
         depth_feas = self.depth_backbone(depth)
         ir_feas = self.ir_backbone(ir)
-        depth_rgb = self.cross_atten(depth_feas, color_feas)
-        depth_ir = self.cross_atten(depth_feas, ir_feas)
-        # 融合后的后续操作
-        # fea = depth_rgb + depth_feas + depth_ir
-        fea = torch.cat([depth_rgb, depth_feas, depth_ir], dim=1)
+
+        # Cross-attention based on guidance modality
+        if self.guidance_modality == 'depth':
+            # Depth-guided: depth attends to color and IR
+            guide_other1 = self.cross_atten(depth_feas, color_feas)
+            guide_other2 = self.cross_atten(depth_feas, ir_feas)
+            guide_feas = depth_feas
+        elif self.guidance_modality == 'color':
+            # Color-guided: color attends to depth and IR
+            guide_other1 = self.cross_atten(color_feas, depth_feas)
+            guide_other2 = self.cross_atten(color_feas, ir_feas)
+            guide_feas = color_feas
+        elif self.guidance_modality == 'ir':
+            # IR-guided: IR attends to depth and color
+            guide_other1 = self.cross_atten(ir_feas, depth_feas)
+            guide_other2 = self.cross_atten(ir_feas, color_feas)
+            guide_feas = ir_feas
+        else:
+            raise ValueError(f"Unknown guidance_modality: {self.guidance_modality}")
+
+        # Fusion: [attended1, guide, attended2]
+        fea = torch.cat([guide_other1, guide_feas, guide_other2], dim=1)
         x = self.bottleneck(fea)
         # x = self.final_DW(x)
 

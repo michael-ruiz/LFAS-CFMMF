@@ -5,11 +5,13 @@ def get_save_path(config, localtime):
     out_root = './results'
     if config.is_Multi:
         # 多模态 /results/CASIA-SURF/fusion/CDCN_112
-        config.flod_name = config.model + '_Multi' + '_' + str(config.image_size)
+        # Include guidance_modality in folder name (e.g., ShffleNetV2_hd_v1_Multi_64_depth)
+        guidance = getattr(config, 'guidance_modality', 'depth')
+        config.flod_name = config.model + '_Multi' + '_' + str(config.image_size) + '_' + guidance
         save_path = os.path.join(out_root, config.dataset_name, 'fusion', config.flod_name)
         if config.prot is not None:
             save_path = os.path.join(out_root, config.dataset_name, 'fusion', config.flod_name, config.prot)
-        file_name = config.model + '_' + 'fusion' + '_' + str(config.image_size) + '_' + localtime + '_' + '.txt'
+        file_name = config.model + '_' + 'fusion' + '_' + str(config.image_size) + '_' + guidance + '_' + localtime + '_' + '.txt'
         return save_path, file_name
     else:
         if config.is_Wave:
