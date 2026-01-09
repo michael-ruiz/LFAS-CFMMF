@@ -202,7 +202,13 @@ if __name__ == '__main__':
     from train_test.train_test_amplification import train_one_epoch, do_test
     if config.is_Multi:
         from train_test.train_test_Multi import train_one_epoch, do_test
-    for i in range(config.cycle):
+
+    if config.mode == 'infer_test':
+        # For inference, only run once (no cycling needed)
         main()
-    config.mode = 'infer_test'
-    main()
+    else:
+        # For training, run multiple cycles then do final inference
+        for i in range(config.cycle):
+            main()
+        config.mode = 'infer_test'
+        main()
