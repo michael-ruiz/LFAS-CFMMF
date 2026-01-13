@@ -147,14 +147,19 @@ class Multi_FusionNet(nn.Module):
         print('')
 
 
-    def __init__(self, num_class=10, guidance_modality='depth'):
+    def __init__(self, num_class=10, guidance_modality='depth', adaptive_guidance=False):
         super(Multi_FusionNet,self).__init__()
         self.guidance_modality = guidance_modality
+        self.adaptive_guidance = adaptive_guidance
         self.rgb_backbone = ShuffleNetV2()
         self.depth_backbone = ShuffleNetV2()
         self.ir_backbone = ShuffleNetV2()
         init_channel = 64
         self.cross_atten = CrossAtten(channel=init_channel)
+
+        if self.adaptive_guidance:
+            self.guidance_selector = GuidanceSelector(channel=init_channel, hidden_dim=64)
+
         self.bottleneck = nn.Sequential(nn.Conv2d(init_channel*3, init_channel, kernel_size=1, padding=0),
                                         nn.BatchNorm2d(init_channel),
                                         nn.ReLU(inplace=True))
@@ -178,27 +183,54 @@ class Multi_FusionNet(nn.Module):
         depth_feas = self.depth_backbone(depth)
         ir_feas = self.ir_backbone(ir)
 
-        # Cross-attention based on guidance modality
-        if self.guidance_modality == 'depth':
-            # Depth-guided: depth attends to color and IR
-            guide_other1 = self.cross_atten(depth_feas, color_feas)
-            guide_other2 = self.cross_atten(depth_feas, ir_feas)
-            guide_feas = depth_feas
-        elif self.guidance_modality == 'color':
-            # Color-guided: color attends to depth and IR
-            guide_other1 = self.cross_atten(color_feas, depth_feas)
-            guide_other2 = self.cross_atten(color_feas, ir_feas)
-            guide_feas = color_feas
-        elif self.guidance_modality == 'ir':
-            # IR-guided: IR attends to depth and color
-            guide_other1 = self.cross_atten(ir_feas, depth_feas)
-            guide_other2 = self.cross_atten(ir_feas, color_feas)
-            guide_feas = ir_feas
-        else:
-            raise ValueError(f"Unknown guidance_modality: {self.guidance_modality}")
+        # Cross-attention fusion
+        guidance_weights = None  # Will be set if adaptive_guidance is True
+        if self.adaptive_guidance:
+            # Adaptive: compute per-sample weights and all three guided outputs
+            guidance_weights = self.guidance_selector(depth_feas, color_feas, ir_feas)  # [B, 3]
 
-        # Fusion: [attended1, guide, attended2]
-        fea = torch.cat([guide_other1, guide_feas, guide_other2], dim=1)
+            # Depth-guided fusion [B, 192, H, W]
+            depth_guided = torch.cat([
+                self.cross_atten(depth_feas, color_feas),
+                depth_feas,
+                self.cross_atten(depth_feas, ir_feas)
+            ], dim=1)
+
+            # Color-guided fusion [B, 192, H, W]
+            color_guided = torch.cat([
+                self.cross_atten(color_feas, depth_feas),
+                color_feas,
+                self.cross_atten(color_feas, ir_feas)
+            ], dim=1)
+
+            # IR-guided fusion [B, 192, H, W]
+            ir_guided = torch.cat([
+                self.cross_atten(ir_feas, depth_feas),
+                ir_feas,
+                self.cross_atten(ir_feas, color_feas)
+            ], dim=1)
+
+            # Weighted combination
+            fea = (guidance_weights[:, 0:1, None, None] * depth_guided +
+                   guidance_weights[:, 1:2, None, None] * color_guided +
+                   guidance_weights[:, 2:3, None, None] * ir_guided)
+        else:
+            # Fixed guidance modality
+            if self.guidance_modality == 'depth':
+                guide_other1 = self.cross_atten(depth_feas, color_feas)
+                guide_other2 = self.cross_atten(depth_feas, ir_feas)
+                guide_feas = depth_feas
+            elif self.guidance_modality == 'color':
+                guide_other1 = self.cross_atten(color_feas, depth_feas)
+                guide_other2 = self.cross_atten(color_feas, ir_feas)
+                guide_feas = color_feas
+            elif self.guidance_modality == 'ir':
+                guide_other1 = self.cross_atten(ir_feas, depth_feas)
+                guide_other2 = self.cross_atten(ir_feas, color_feas)
+                guide_feas = ir_feas
+            else:
+                raise ValueError(f"Unknown guidance_modality: {self.guidance_modality}")
+            fea = torch.cat([guide_other1, guide_feas, guide_other2], dim=1)
         x = self.bottleneck(fea)
         # x = self.final_DW(x)
 
@@ -213,7 +245,7 @@ class Multi_FusionNet(nn.Module):
         color_feas = color_feas.view(color_feas.size(0), -1)
         ir_feas = ir_feas.view(ir_feas.size(0), -1)
 
-        return x, depth_feas, color_feas, ir_feas, x_map
+        return x, depth_feas, color_feas, ir_feas, x_map, guidance_weights
 
 
 class CrossAtten(nn.Module):
@@ -250,3 +282,26 @@ class CrossAtten(nn.Module):
         """
         logit = crossedh1_h2
         return logit
+
+
+class GuidanceSelector(nn.Module):
+    """Learns per-sample weights for guidance modality selection."""
+    def __init__(self, channel=64, hidden_dim=64):
+        super(GuidanceSelector, self).__init__()
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.mlp = nn.Sequential(
+            nn.Linear(channel * 3, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, 3),
+        )
+
+    def forward(self, depth_feas, color_feas, ir_feas):
+        # GAP: [B, 64, H, W] -> [B, 64]
+        depth_vec = self.gap(depth_feas).view(depth_feas.size(0), -1)
+        color_vec = self.gap(color_feas).view(color_feas.size(0), -1)
+        ir_vec = self.gap(ir_feas).view(ir_feas.size(0), -1)
+
+        # Concat -> MLP -> Softmax
+        concat_vec = torch.cat([depth_vec, color_vec, ir_vec], dim=1)
+        weights = F.softmax(self.mlp(concat_vec), dim=1)
+        return weights  # [B, 3]

@@ -26,7 +26,9 @@ def get_model(config, num_class, is_pruning=False):
 
         if config.is_Multi:
             guidance_modality = getattr(config, 'guidance_modality', 'depth')
-            net = Multi_FusionNet(guidance_modality=guidance_modality)
+            adaptive_guidance = getattr(config, 'adaptive_guidance', False)
+            net = Multi_FusionNet(guidance_modality=guidance_modality,
+                                  adaptive_guidance=adaptive_guidance)
         elif config.is_Wave:
             if is_pruning:
                 net = Two_StreamNet_Pruning()
