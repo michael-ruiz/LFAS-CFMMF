@@ -186,34 +186,38 @@ class Multi_FusionNet(nn.Module):
         # Cross-attention fusion
         guidance_weights = None  # Will be set if adaptive_guidance is True
         if self.adaptive_guidance:
-            # Adaptive: compute per-sample weights and all three guided outputs
+            # Compute per-sample weights
             guidance_weights = self.guidance_selector(depth_feas, color_feas, ir_feas)  # [B, 3]
 
-            # Depth-guided fusion [B, 192, H, W]
-            depth_guided = torch.cat([
-                self.cross_atten(depth_feas, color_feas),
-                depth_feas,
-                self.cross_atten(depth_feas, ir_feas)
-            ], dim=1)
+            # Select the modality with highest weight per sample
+            selected_modality = torch.argmax(guidance_weights, dim=1)  # [B]
 
-            # Color-guided fusion [B, 192, H, W]
-            color_guided = torch.cat([
-                self.cross_atten(color_feas, depth_feas),
-                color_feas,
-                self.cross_atten(color_feas, ir_feas)
-            ], dim=1)
-
-            # IR-guided fusion [B, 192, H, W]
-            ir_guided = torch.cat([
-                self.cross_atten(ir_feas, depth_feas),
-                ir_feas,
-                self.cross_atten(ir_feas, color_feas)
-            ], dim=1)
-
-            # Weighted combination
-            fea = (guidance_weights[:, 0:1, None, None] * depth_guided +
-                   guidance_weights[:, 1:2, None, None] * color_guided +
-                   guidance_weights[:, 2:3, None, None] * ir_guided)
+            # Build fused features based on selected modality per sample
+            # The selected modality is the GUIDE - the other 2 modalities attend to it
+            B = depth_feas.size(0)
+            fea_list = []
+            for i in range(B):
+                mod = selected_modality[i].item()
+                if mod == 0:  # depth is guide
+                    fea_i = torch.cat([
+                        self.cross_atten(color_feas[i:i+1], depth_feas[i:i+1]),  # color attends to depth
+                        self.cross_atten(ir_feas[i:i+1], depth_feas[i:i+1]),     # ir attends to depth
+                        depth_feas[i:i+1]                                         # guide features
+                    ], dim=1)
+                elif mod == 1:  # color is guide
+                    fea_i = torch.cat([
+                        self.cross_atten(depth_feas[i:i+1], color_feas[i:i+1]),  # depth attends to color
+                        self.cross_atten(ir_feas[i:i+1], color_feas[i:i+1]),     # ir attends to color
+                        color_feas[i:i+1]                                         # guide features
+                    ], dim=1)
+                else:  # ir is guide (mod == 2)
+                    fea_i = torch.cat([
+                        self.cross_atten(depth_feas[i:i+1], ir_feas[i:i+1]),     # depth attends to ir
+                        self.cross_atten(color_feas[i:i+1], ir_feas[i:i+1]),     # color attends to ir
+                        ir_feas[i:i+1]                                            # guide features
+                    ], dim=1)
+                fea_list.append(fea_i)
+            fea = torch.cat(fea_list, dim=0)
         else:
             # Fixed guidance modality
             if self.guidance_modality == 'depth':
