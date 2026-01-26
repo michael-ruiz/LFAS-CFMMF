@@ -11,7 +11,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model.backbone.Common_fun import *
+from model.backbone.Common_fun import ECALayer, GhostModule
 
 
 def channel_shuffle(x, groups):
@@ -47,8 +47,7 @@ class ShuffleUnit(nn.Module):
 
         if stride != 1 or in_channels != out_channels:
             self.residual = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, 3, stride=stride, padding=1, groups=mid_channels),
-                nn.BatchNorm2d(mid_channels),
+                GhostModule(mid_channels, mid_channels, kernel_size=3, stride=stride, relu=True),
                 nn.Conv2d(mid_channels, int(out_channels / 2), 1),
                 nn.BatchNorm2d(int(out_channels / 2)),
                 nn.ReLU(inplace=True)
@@ -61,11 +60,10 @@ class ShuffleUnit(nn.Module):
             )
 
         else:
-            
+
             # main branch
             self.residual = nn.Sequential(
-                nn.Conv2d(mid_channels, mid_channels, 3, stride=stride, padding=1, groups=mid_channels),
-                nn.BatchNorm2d(mid_channels),
+                GhostModule(mid_channels, mid_channels, kernel_size=3, stride=stride, relu=True),
                 nn.Conv2d(mid_channels, mid_channels, 1),
                 nn.BatchNorm2d(mid_channels),
                 nn.ReLU(inplace=True)
@@ -103,11 +101,11 @@ class ShuffleNetV2(nn.Module):
         )
 
         self.stage2 = self._make_stage(init_c, out_channels[0], stage_layers[0])
-        self.se2 = SELayer(out_channels[0])
+        self.se2 = ECALayer(out_channels[0])
         self.stage3 = self._make_stage(out_channels[0], out_channels[1], stage_layers[1])
-        self.se3 = SELayer(out_channels[1])
+        self.se3 = ECALayer(out_channels[1])
         self.stage4 = self._make_stage(out_channels[1], out_channels[2],stage_layers[2])
-        self.se4 = SELayer(out_channels[2])
+        self.se4 = ECALayer(out_channels[2])
         self.conv5 = nn.Sequential(
             nn.Conv2d(out_channels[2], out_channels[3], 1),
             nn.BatchNorm2d(out_channels[3]),

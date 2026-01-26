@@ -63,6 +63,48 @@ class SELayer(nn.Module):
         return module_input * x
 
 
+class ECALayer(nn.Module):
+    """Efficient Channel Attention - uses 1D conv instead of FC layers"""
+    def __init__(self, channels, gamma=2, b=1):
+        super(ECALayer, self).__init__()
+        k = int(abs((math.log2(channels) + b) / gamma)) | 1  # adaptive kernel, ensure odd
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        y = self.avg_pool(x).squeeze(-1).transpose(-1, -2)  # [B, 1, C]
+        y = self.conv(y).transpose(-1, -2).unsqueeze(-1)     # [B, C, 1, 1]
+        return x * self.sigmoid(y)
+
+
+class GhostModule(nn.Module):
+    """Ghost Module - generates more features from fewer parameters"""
+    def __init__(self, inp, oup, kernel_size=1, ratio=2, dw_size=3, stride=1, relu=True):
+        super(GhostModule, self).__init__()
+        self.oup = oup
+        init_channels = math.ceil(oup / ratio)
+        new_channels = init_channels * (ratio - 1)
+
+        self.primary_conv = nn.Sequential(
+            nn.Conv2d(inp, init_channels, kernel_size, stride, kernel_size//2, bias=False),
+            nn.BatchNorm2d(init_channels),
+            nn.ReLU(inplace=True) if relu else nn.Sequential(),
+        )
+
+        self.cheap_operation = nn.Sequential(
+            nn.Conv2d(init_channels, new_channels, dw_size, 1, dw_size//2, groups=init_channels, bias=False),
+            nn.BatchNorm2d(new_channels),
+            nn.ReLU(inplace=True) if relu else nn.Sequential(),
+        )
+
+    def forward(self, x):
+        x1 = self.primary_conv(x)
+        x2 = self.cheap_operation(x1)
+        out = torch.cat([x1, x2], dim=1)
+        return out[:, :self.oup, :, :]
+
+
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
         super(h_sigmoid, self).__init__()
